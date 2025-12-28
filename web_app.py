@@ -22,7 +22,7 @@ from journal import load_journal_records
 
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("BOT_SECRET_KEY")
+app.secret_key = os.environ.get("BOT_SECRET_KEY", "123$%^&*()")
 AUTH_USERNAME = os.environ.get("BOT_DASH_USER")
 AUTH_PASSWORD = os.environ.get("BOT_DASH_PASS")
 
