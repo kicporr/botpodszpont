@@ -3,6 +3,9 @@ from datetime import datetime, timedelta
 from threading import Thread
 
 from flask import Flask, render_template_string, jsonify, request
+from functools import wraps
+from flask import Response
+
 
 from config_manager import load_config, save_config, load_positions, save_positions
 from data_providers import fetch_candles_binance
@@ -10,6 +13,29 @@ from strategy_engine import run_live_cycle
 from journal import load_journal_records
 
 app = Flask(__name__)
+# proste dane logowania – ZMIEŃ to na swoje
+AUTH_USERNAME = "admin"
+AUTH_PASSWORD = "usiek"
+
+def check_auth(username, password):
+    return username == AUTH_USERNAME and password == AUTH_PASSWORD
+
+def authenticate():
+    """Odpowiedź 401 z nagłówkiem WWW-Authenticate (przeglądarka pokaże popup)."""
+    return Response(
+        "Authentication required", 401,
+        {"WWW-Authenticate": 'Basic realm="Dashboard"'}
+    )
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return authenticate()
+        return f(*args, **kwargs)
+    return decorated
+
 
 dashboard_data = {
     "last_update": "",
@@ -42,6 +68,7 @@ TIMEFRAME = "1h"
 
 
 @app.route("/")
+@requires_auth
 def dashboard():
     cfg = load_config()
     html = """<!doctype html>
@@ -846,6 +873,7 @@ def dashboard():
 
 
 @app.route("/journal")
+@requires_auth
 def journal():
     cfg = load_config()
     page_size = int(cfg.get("journal_page_size", 50))
