@@ -17,5 +17,8 @@
   "live_trading_mode": false,
   "journal_page_size": 50,
   "account_equity_usd": 2000,
-  "risk_per_trade_pct": 1.0
+  "risk_per_trade_pct": 1.0,
+  "trading_paused_for_today": false,
+  "daily_risk_limit_usd": -100,
+  "daily_risk_limit_enabled": false
 }

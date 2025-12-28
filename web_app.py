@@ -9,7 +9,6 @@ from data_providers import fetch_candles_binance
 from strategy_engine import run_live_cycle
 from journal import load_journal_records
 
-
 app = Flask(__name__)
 
 dashboard_data = {
@@ -28,6 +27,14 @@ dashboard_data = {
     },
     "current_signals": [],
     "live_trading_mode": False,
+    "equity": 0.0,
+    "equity_unrealized": 0.0,
+    "risk": {
+        "daily_risk_limit_enabled": False,
+        "daily_risk_limit_usd": -50.0,
+        "pnl_today": 0.0,
+        "trading_paused_for_today": False,
+    },
 }
 
 force_closed_until = {}
@@ -157,12 +164,11 @@ def dashboard():
       font-size: 1.5rem;
       font-weight: 600;
     }
-    
+
     .metric-value.equity {
       color: #38bdf8;
       text-shadow: 0 0 18px rgba(56,189,248,.55);
     }
-
 
     .metric-sub {
       font-size: .75rem;
@@ -337,6 +343,57 @@ def dashboard():
     .form-check-label {
       font-size: .8rem;
     }
+
+    .status-bar {
+      font-size: .8rem;
+      color: var(--text-muted);
+    }
+
+    .status-bar span {
+      margin-right: 1rem;
+    }
+
+    .status-badge-paused {
+      color: #f97316;
+    }
+
+    .status-badge-active {
+      color: #22c55e;
+    }
+
+    /* switches */
+    .switch-compact .form-check-input {
+      width: 2.4rem;
+      height: 1.3rem;
+      background-color: #020617;
+      border-radius: 1rem;
+      border: 1px solid #4b5563;
+      cursor: pointer;
+      box-shadow: inset 0 0 4px rgba(15,23,42,0.8);
+    }
+
+    .switch-compact .form-check-input:focus {
+      box-shadow: 0 0 0 1px #38bdf8;
+      border-color: #38bdf8;
+    }
+
+    .switch-compact .form-check-input:checked {
+      background-color: #38bdf8;
+      border-color: #38bdf8;
+      box-shadow: 0 0 10px rgba(56,189,248,.6);
+    }
+
+    .switch-compact .form-check-input:checked[type="checkbox"] {
+      background-image: none;
+    }
+
+    .switch-compact .form-check-label {
+      font-size: .78rem;
+      color: var(--text-muted);
+      margin-left: 0.35rem;
+      user-select: none;
+    }
+
   </style>
 </head>
 <body>
@@ -410,15 +467,31 @@ def dashboard():
             <label class="settings-label mb-1">Cooldown (h)</label>
             <input type="number" min="0" step="0.5" class="form-control" id="cooldown_hours">
           </div>
+
           <div class="col-6 col-md-2">
-            <div class="form-check mt-4">
-              <input class="form-check-input" type="checkbox" id="live_trading_mode">
-              <label class="form-check-label" for="live_trading_mode">
-                Live trading mode
+            <label class="settings-label mb-1">Daily risk limit (USD)</label>
+            <input type="number" step="1" class="form-control" id="daily_risk_limit_usd">
+          </div>
+
+          <div class="col-6 col-md-3">
+            <div class="form-check form-switch mt-4 switch-compact">
+              <input class="form-check-input" type="checkbox" id="daily_risk_limit_enabled" role="switch">
+              <label class="form-check-label" for="daily_risk_limit_enabled">
+                Daily risk limit
               </label>
             </div>
           </div>
-          <div class="col-12 col-md-3 text-md-end">
+
+          <div class="col-6 col-md-3">
+            <div class="form-check form-switch mt-4 switch-compact">
+              <input class="form-check-input" type="checkbox" id="live_trading_mode" role="switch">
+              <label class="form-check-label" for="live_trading_mode">
+                Live trading
+              </label>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-2 text-md-end">
             <button type="button" class="btn btn-sm btn-primary" onclick="saveSettings()">
               Save settings
             </button>
@@ -427,12 +500,37 @@ def dashboard():
             <small id="settings-status" class="text-muted"></small>
           </div>
         </form>
+
+        <!-- STATUS BOTA / RYZYKO -->
+        <div class="mt-3 status-bar">
+          {% if data.risk.trading_paused_for_today %}
+            <span class="status-badge-paused">
+              Trading status: PAUSED (daily loss limit reached)
+            </span>
+          {% else %}
+            <span class="status-badge-active">
+              Trading status: ACTIVE
+            </span>
+          {% endif %}
+          <span>
+            Today P&L:
+            {% if data.risk.pnl_today >= 0 %}
+              <span class="pnl-pos">{{ data.risk.pnl_today }}</span>
+            {% else %}
+              <span class="pnl-neg">{{ data.risk.pnl_today }}</span>
+            {% endif %}
+          </span>
+          <span>
+            Limit: {{ data.risk.daily_risk_limit_usd }}
+          </span>
+        </div>
+
       </div>
     </div>
   </div>
 
   <!-- METRYKI -->
-    <div class="container-fluid mb-4">
+  <div class="container-fluid mb-4">
     <div class="row g-3">
       <div class="col-6 col-md-2">
         <div class="card metric-card">
@@ -466,7 +564,6 @@ def dashboard():
         </div>
       </div>
 
-      <!-- NOWA KARTA EQUITY -->
       <div class="col-6 col-md-3">
         <div class="card metric-card">
           <div class="metric-body">
@@ -498,10 +595,7 @@ def dashboard():
     </div>
   </div>
 
-
-  <!-- TABEL
-       CURRENT SIGNALS / OPEN POSITIONS / CLOSED TRADES
-  -->
+  <!-- CURRENT SIGNALS / OPEN POSITIONS / CLOSED TRADES -->
   <div class="container-fluid pb-4">
     <div class="row g-4">
       <!-- CURRENT SIGNALS -->
@@ -542,6 +636,8 @@ def dashboard():
                       <span class="status-pill status-position">In position</span>
                     {% elif s.status == 'COOLDOWN' %}
                       <span class="status-pill status-cooldown">Cooldown</span>
+                    {% elif s.status == 'PAUSED' %}
+                      <span class="status-pill status-cooldown">Paused</span>
                     {% else %}
                       <span class="status-pill status-hold">{{ s.status }}</span>
                     {% endif %}
@@ -575,6 +671,7 @@ def dashboard():
                   <th>TP</th>
                   <th>Price</th>
                   <th>P&L</th>
+                  <th>MFE / MAE</th>
                   <th>Age</th>
                   <th></th>
                 </tr>
@@ -600,6 +697,11 @@ def dashboard():
                     {% else %}
                       <span class="pnl-neg">{{ pos.pnl_usd }} ({{ pos.pnl_pct }}%)</span>
                     {% endif %}
+                  </td>
+                  <td>
+                    <span class="pnl-pos">{{ pos.mfe_pct }}%</span>
+                    <span class="pnl-small"> / </span>
+                    <span class="pnl-neg">{{ pos.mae_pct }}%</span>
                   </td>
                   <td>{{ pos.age }}</td>
                   <td>
@@ -677,6 +779,8 @@ def dashboard():
         document.getElementById("tp_pct_short").value = cfg.tp_pct_short ?? 3.5;
         document.getElementById("cooldown_hours").value = cfg.cooldown_hours ?? 1.0;
         document.getElementById("live_trading_mode").checked = cfg.live_trading_mode === true;
+        document.getElementById("daily_risk_limit_usd").value = cfg.daily_risk_limit_usd ?? -50;
+        document.getElementById("daily_risk_limit_enabled").checked = cfg.daily_risk_limit_enabled === true;
       } catch (e) {
         document.getElementById("settings-status").textContent = "Failed to load settings";
       }
@@ -694,7 +798,9 @@ def dashboard():
         tp_pct_short: Number(document.getElementById("tp_pct_short").value),
         account_equity_usd: Number(document.getElementById("account_equity_usd").value),
         cooldown_hours: Number(document.getElementById("cooldown_hours").value),
-        live_trading_mode: document.getElementById("live_trading_mode").checked
+        live_trading_mode: document.getElementById("live_trading_mode").checked,
+        daily_risk_limit_usd: Number(document.getElementById("daily_risk_limit_usd").value),
+        daily_risk_limit_enabled: document.getElementById("daily_risk_limit_enabled").checked
       };
       try {
         const res = await fetch("/config", {
@@ -736,7 +842,7 @@ def dashboard():
   </script>
 </body>
 </html>"""
-    return render_template_string(html, data=dashboard_data, config=load_config())
+    return render_template_string(html, data=dashboard_data, config=cfg)
 
 
 @app.route("/journal")
@@ -845,6 +951,8 @@ def journal():
                 <th>Exit type</th>
                 <th>P&L</th>
                 <th>R:R</th>
+                <th>MFE%</th>
+                <th>MAE%</th>
                 <th>Duration</th>
               </tr>
             </thead>
@@ -871,6 +979,20 @@ def journal():
                   {% endif %}
                 </td>
                 <td>{{ r.rr }}</td>
+                <td>
+                  {% if r.mfe_pct is not none %}
+                    {{ r.mfe_pct }}%
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>
+                  {% if r.mae_pct is not none %}
+                    {{ r.mae_pct }}%
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
                 <td>{{ r.duration or "-" }}</td>
               </tr>
               {% endfor %}
@@ -912,6 +1034,8 @@ def api_config():
         "journal_page_size",
         "account_equity_usd",
         "risk_per_trade_pct",
+        "daily_risk_limit_usd",
+        "daily_risk_limit_enabled",
     ]:
         if key in data:
             cfg[key] = data[key]
@@ -942,13 +1066,16 @@ def close_position():
 
     try:
         df_last = fetch_candles_binance(symbol=symbol, interval=TIMEFRAME, limit=1)
-        current_price = float(df_last.iloc[-1]["close"]) if not df_last.empty else position["entry"]
+        if df_last is not None and not df_last.empty:
+            current_price = float(df_last.iloc[-1]["close"])
+        else:
+            current_price = position["entry"]
     except Exception:
         current_price = position["entry"]
 
     entry = position["entry"]
     side = position["action"]
-    size_usd = position.get("position_size_usd", 0)
+    size_usd = float(position.get("position_size_usd", 0.0))
 
     if side == "BUY":
         pnl_pct = (current_price - entry) / entry * 100
@@ -957,10 +1084,14 @@ def close_position():
 
     pnl_usd = size_usd * (pnl_pct / 100.0)
 
+    mfe_pct = float(position.get("mfe_pct", 0.0))
+    mae_pct = float(position.get("mae_pct", 0.0))
+
     with open("trade_results.log", "a", encoding="utf-8") as f:
         log_msg = (
             f"[{timestamp}] {symbol}: CLOSED @ FORCE | "
-            f"P&L: ${pnl_usd:.2f} ({pnl_pct:.2f}%)"
+            f"P&L: ${pnl_usd:.2f} ({pnl_pct:.2f}%) | "
+            f"MFE: {mfe_pct:.2f}% | MAE: {mae_pct:.2f}%"
         )
         f.write(log_msg + "\n")
 
@@ -979,12 +1110,14 @@ def close_position():
     )
     dashboard_data["closed_trades"] = dashboard_data["closed_trades"][:10]
 
-    return jsonify({
-        "symbol": symbol,
-        "closed_at": timestamp,
-        "pnl_usd": round(pnl_usd, 2),
-        "pnl_pct": round(pnl_pct, 2),
-    })
+    return jsonify(
+        {
+            "symbol": symbol,
+            "closed_at": timestamp,
+            "pnl_usd": round(pnl_usd, 2),
+            "pnl_pct": round(pnl_pct, 2),
+        }
+    )
 
 
 def live_worker():
