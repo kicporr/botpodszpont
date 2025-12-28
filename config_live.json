@@ -1,0 +1,21 @@
+{
+  "confidence_threshold": 0.6,
+  "max_open_positions": 4,
+  "default_position_size_usd": 100,
+  "symbol_position_size": {
+    "BTCUSDT": 150,
+    "ETHUSDT": 125,
+    "XRPUSDT": 75,
+    "BCHUSDT": 150,
+    "BNBUSDT": 100
+  },
+  "sl_pct_long": 3,
+  "tp_pct_long": 3.5,
+  "sl_pct_short": 3,
+  "tp_pct_short": 3.5,
+  "cooldown_hours": 1,
+  "live_trading_mode": false,
+  "journal_page_size": 50,
+  "account_equity_usd": 2000,
+  "risk_per_trade_pct": 1.0
+}

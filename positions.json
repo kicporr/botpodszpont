@@ -1,0 +1,29 @@
+{
+  "XRPUSDT": {
+    "entry": 1.8708,
+    "sl": 1.926924,
+    "tp": 1.8053219999999999,
+    "action": "SELL",
+    "conf": 1.0,
+    "position_size_usd": 666.666666666666,
+    "opened_at": "2025-12-28 16:54:07"
+  },
+  "BCHUSDT": {
+    "entry": 632.4,
+    "sl": 651.372,
+    "tp": 610.266,
+    "action": "SELL",
+    "conf": 1.0,
+    "position_size_usd": 666.6666666666673,
+    "opened_at": "2025-12-28 16:54:07"
+  },
+  "BNBUSDT": {
+    "entry": 861.8,
+    "sl": 887.654,
+    "tp": 831.637,
+    "action": "SELL",
+    "conf": 1.0,
+    "position_size_usd": 666.6666666666655,
+    "opened_at": "2025-12-28 16:54:07"
+  }
+}
