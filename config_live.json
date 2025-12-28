@@ -1,7 +1,7 @@
 {
   "confidence_threshold": 0.6,
   "max_open_positions": 4,
-  "default_position_size_usd": 100,
+  "default_position_size_usd": 100.0,
   "symbol_position_size": {
     "BTCUSDT": 150,
     "ETHUSDT": 125,
@@ -9,16 +9,16 @@
     "BCHUSDT": 150,
     "BNBUSDT": 100
   },
-  "sl_pct_long": 3,
+  "sl_pct_long": 3.0,
   "tp_pct_long": 3.5,
-  "sl_pct_short": 3,
+  "sl_pct_short": 3.0,
   "tp_pct_short": 3.5,
-  "cooldown_hours": 1,
+  "cooldown_hours": 1.0,
   "live_trading_mode": false,
   "journal_page_size": 50,
-  "account_equity_usd": 2000,
+  "account_equity_usd": 2000.0,
   "risk_per_trade_pct": 1.0,
   "trading_paused_for_today": false,
-  "daily_risk_limit_usd": -100,
+  "daily_risk_limit_usd": -100.0,
   "daily_risk_limit_enabled": false
 }

@@ -9,14 +9,7 @@ DATA_BINANCE_DIR = "./data_binance"
 
 # mapa symboli z Twojej strategii -> symbole Binance
 PORTFOLIO_SYMBOLS = {
-    "BTC-USDT": "BTCUSDT",
-    "ETH-USDT": "ETHUSDT",
-    "XRP-USDT": "XRPUSDT",
-    "SOL-USDT": "SOLUSDT",
-    "LTC-USDT": "LTCUSDT",
-    "ADA-USDT": "ADAUSDT",
-    "BCH-USDT": "BCHUSDT",
-    "BNB-USDT": "BNBUSDT",
+    "LINK-USDT": "LINKUSDT",
 }
 
 MAX_BINANCE_LIMIT = 1000  # max na jedno wywołanie
