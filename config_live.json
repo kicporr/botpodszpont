@@ -1,6 +1,6 @@
 {
   "confidence_threshold": 0.6,
-  "max_open_positions": 4,
+  "max_open_positions": 10,
   "default_position_size_usd": 100.0,
   "symbol_position_size": {
     "BTCUSDT": 150,

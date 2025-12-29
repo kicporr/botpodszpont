@@ -17,14 +17,17 @@ from flask import (
 
 from config_manager import load_config, save_config, load_positions, save_positions
 from data_providers import fetch_candles_binance
-from strategy_engine import run_live_cycle
+from strategy_engine import run_live_cycle, TIMEFRAME
 from journal import load_journal_records
-
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("BOT_SECRET_KEY", "123$%^&*()")
+
 AUTH_USERNAME = os.environ.get("BOT_DASH_USER")
 AUTH_PASSWORD = os.environ.get("BOT_DASH_PASS")
+
+TRADE_RESULTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_results.log")
+TRADE_SIGNALS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_signals.log")
 
 
 def requires_login(f):
@@ -33,6 +36,7 @@ def requires_login(f):
         if not session.get("logged_in"):
             return redirect(url_for("login", next=request.path))
         return f(*args, **kwargs)
+
     return wrapped
 
 
@@ -72,19 +76,73 @@ dashboard_data = {
         "trading_paused_for_today": False,
         "trades_today": 0,
     },
-
 }
 
-force_closed_until = {}
-TIMEFRAME = "1h"
+force_closed_until: dict[str, str] = {}
+TIMEFRAME = TIMEFRAME  # zaciągnięty ze strategy_engine
+
+
+def load_recent_closed_trades(limit: int = 5):
+    """
+    Wczytuje ostatnie zamknięte trady z trade_results.log.
+    Zwraca listę dictów: timestamp, symbol, exit_type, pnl, pnl_pct.
+    """
+    if not os.path.exists(TRADE_RESULTS_FILE):
+        return []
+
+    records = []
+    try:
+        with open(TRADE_RESULTS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                if "CLOSED @" not in line or "P&L:" not in line:
+                    continue
+                try:
+                    # [TS] SYMBOL: CLOSED @ TYPE | P&L: $X (Y%) | MFE... | MAE...
+                    ts_start = line.find("[") + 1
+                    ts_end = line.find("]", ts_start)
+                    timestamp = line[ts_start:ts_end]
+
+                    after = line[ts_end + 1 :].strip()
+                    symbol_part, rest = after.split(":", 1)
+                    symbol = symbol_part.strip()
+
+                    exit_type = rest.split("@")[1].split("|")[0].strip()
+
+                    pnl_start = rest.find("P&L: $") + len("P&L: $")
+                    pnl_end = rest.find(" (", pnl_start)
+                    pnl_usd = float(rest[pnl_start:pnl_end])
+
+                    pct_start = rest.find("(", pnl_end) + 1
+                    pct_end = rest.find("%", pct_start)
+                    pnl_pct = float(rest[pct_start:pct_end])
+
+                    records.append(
+                        {
+                            "timestamp": timestamp,
+                            "symbol": symbol,
+                            "exit_type": exit_type,
+                            "pnl": pnl_usd,
+                            "pnl_pct": pnl_pct,
+                        }
+                    )
+                except Exception:
+                    continue
+    except Exception:
+        return []
+
+    records_sorted = sorted(records, key=lambda x: x["timestamp"], reverse=True)
+    return records_sorted[:limit]
+
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
     next_url = request.args.get("next") or url_for("dashboard")
+
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
+
         if username == AUTH_USERNAME and password == AUTH_PASSWORD:
             session["logged_in"] = True
             return redirect(next_url)
@@ -93,235 +151,118 @@ def login():
 
     html = """
 <!doctype html>
-<html lang="en">
+<html lang="pl">
 <head>
   <meta charset="utf-8">
   <title>Bot Login</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    :root {
-      --bg-main: #020617;
-      --bg-card: #020617;
-      --border-soft: #1f2937;
-      --text-main: #e5e7eb;
-      --text-muted: #9ca3af;
-      --accent: #38bdf8;
-      --accent-soft: rgba(56,189,248,0.12);
-      --danger: #f97373;
-    }
-    * {
-      box-sizing: border-box;
-    }
     body {
-      margin: 0;
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at top, rgba(56,189,248,0.18), transparent 55%),
-        radial-gradient(circle at bottom, #020617 0, #020617 60%, #020617 100%);
-      color: var(--text-main);
+      background-color: #020617;
+      color: #e5e7eb;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;
+      height: 100vh;
+      margin: 0;
     }
-    .login-shell {
+    .card {
+      background-color: #020617;
+      border-radius: .9rem;
+      border: 1px solid #1f2937;
+      box-shadow: 0 18px 40px rgba(15,23,42,0.7);
+      padding: 2rem;
       width: 100%;
-      max-width: 420px;
-      padding: 1.5rem;
+      max-width: 360px;
     }
-    .brand-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: .4rem;
-      padding: .25rem .8rem;
-      border-radius: 999px;
-      border: 1px solid rgba(148,163,184,.4);
-      font-size: .75rem;
-      text-transform: uppercase;
-      letter-spacing: .1em;
-      color: var(--text-muted);
-      background: rgba(15,23,42,0.75);
-      backdrop-filter: blur(12px);
-    }
-    .login-card {
-      position: relative;
-      margin-top: 1.2rem;
-      border-radius: 1rem;
-      border: 1px solid var(--border-soft);
-      background: radial-gradient(circle at top, rgba(56,189,248,.12), transparent 55%), #020617;
-      box-shadow: 0 24px 60px rgba(15,23,42,0.85);
-      padding: 1.5rem 1.6rem 1.4rem;
-      overflow: hidden;
-    }
-    .login-card::before {
-      content: "";
-      position: absolute;
-      inset: -40%;
-      background:
-        radial-gradient(circle at top right, rgba(56,189,248,0.12), transparent 55%),
-        radial-gradient(circle at bottom left, rgba(14,165,233,0.09), transparent 55%);
-      opacity: .9;
-      pointer-events: none;
-    }
-    .login-inner {
-      position: relative;
-      z-index: 1;
-    }
-    .login-title {
-      font-size: .95rem;
+    .card h1 {
+      font-size: 1.1rem;
       text-transform: uppercase;
       letter-spacing: .12em;
-      color: var(--text-muted);
-      margin-bottom: .35rem;
+      margin-bottom: 1.5rem;
+      color: #9ca3af;
     }
-    .login-heading {
-      font-size: 1.25rem;
-      font-weight: 600;
-      margin-bottom: .25rem;
-    }
-    .login-sub {
+    label {
       font-size: .8rem;
-      color: var(--text-muted);
-      margin-bottom: 1rem;
-    }
-    .form-label {
-      font-size: .78rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      color: var(--text-muted);
+      color: #9ca3af;
+      display: block;
       margin-bottom: .25rem;
     }
-    .form-control {
-      background-color: rgba(15,23,42,0.9);
-      border-radius: .6rem;
-      border: 1px solid #1f2937;
-      color: var(--text-main);
-      font-size: .85rem;
-      padding: .45rem .75rem;
-    }
-    .form-control:focus {
-      background-color: #020617;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 1px rgba(56,189,248,0.5);
-      color: var(--text-main);
-    }
-    .login-btn {
+    input {
       width: 100%;
+      padding: .5rem .7rem;
+      border-radius: .4rem;
+      border: 1px solid #1f2937;
+      background-color: #020617;
+      color: #e5e7eb;
+      font-size: .85rem;
+      margin-bottom: .75rem;
+    }
+    input:focus {
+      outline: none;
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px #38bdf8;
+    }
+    button {
+      width: 100%;
+      padding: .55rem .7rem;
       border-radius: 999px;
-      border: 1px solid rgba(56,189,248,.7);
+      border: 1px solid #38bdf8;
       background: linear-gradient(90deg, #0ea5e9, #22c55e);
       color: #0b1120;
       font-size: .85rem;
       font-weight: 600;
-      letter-spacing: .08em;
       text-transform: uppercase;
-      padding: .5rem .75rem;
+      letter-spacing: .08em;
+      cursor: pointer;
       margin-top: .5rem;
-      box-shadow: 0 0 24px rgba(56,189,248,.6);
     }
-    .login-btn:hover {
-      filter: brightness(1.05);
-    }
-    .error-box {
-      border-radius: .6rem;
-      border: 1px solid rgba(248,113,113,.6);
-      background-color: rgba(127,29,29,0.3);
-      color: var(--danger);
-      font-size: .78rem;
-      padding: .4rem .6rem;
-      margin-bottom: .7rem;
-    }
-    .footer-hint {
-      margin-top: .75rem;
-      font-size: .7rem;
-      color: var(--text-muted);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .footer-hint span {
-      opacity: .8;
-    }
-    .dot {
-      width: .4rem;
-      height: .4rem;
-      border-radius: 999px;
-      background: #22c55e;
-      box-shadow: 0 0 8px rgba(34,197,94,.7);
-      display: inline-block;
-      margin-right: .3rem;
+    .error {
+      color: #f97316;
+      font-size: .8rem;
+      margin-top: .5rem;
     }
   </style>
 </head>
 <body>
-<div class="login-shell">
-  <div class="d-flex justify-content-between align-items-center mb-2">
-    <div class="brand-badge">
-      <span>MEAN‑REVERSION BOT</span>
-    </div>
-    <small style="font-size:.75rem; color:#6b7280;">1H · BINANCE</small>
+  <div class="card">
+    <h1>Bot Dashboard Login</h1>
+    <form method="POST">
+      <label for="username">Login</label>
+      <input type="text" name="username" id="username" autocomplete="username">
+
+      <label for="password">Hasło</label>
+      <input type="password" name="password" id="password" autocomplete="current-password">
+
+      <button type="submit">Zaloguj</button>
+    </form>
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
   </div>
-
-  <div class="login-card">
-    <div class="login-inner">
-      <div class="login-title">Secure access</div>
-      <div class="login-heading">Sign in to dashboard</div>
-      <div class="login-sub">
-        Dostęp tylko dla właściciela bota.
-      </div>
-
-      {% if error %}
-      <div class="error-box">
-        {{ error }}
-      </div>
-      {% endif %}
-
-      <form method="post">
-        <div class="mb-3">
-          <label class="form-label">Username</label>
-          <input name="username" type="text" class="form-control" autocomplete="username">
-        </div>
-        <div class="mb-2">
-          <label class="form-label">Password</label>
-          <input name="password" type="password" class="form-control" autocomplete="current-password">
-        </div>
-        <input type="hidden" name="next" value="{{ next_url }}">
-        <button type="submit" class="login-btn">Enter dashboard</button>
-      </form>
-
-      <div class="footer-hint">
-        <span><span class="dot"></span>Session protected</span>
-        <span>Auto‑logout po zamknięciu przeglądarki</span>
-      </div>
-    </div>
-  </div>
-</div>
 </body>
 </html>
 """
-    return render_template_string(html, error=error, next_url=next_url)
-
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
+    return render_template_string(html, error=error)
 
 
 @app.route("/")
 @requires_login
 def dashboard():
+    # wczytaj ostatnie 5 zamkniętych tradów z loga (trwałe)
+    recent_closed = load_recent_closed_trades(limit=5)
+
     cfg = load_config()
+    positions = load_positions()
+
     html = """
 <!doctype html>
-<html lang="en">
+<html lang="pl">
 <head>
   <meta charset="utf-8">
-  <title>Mean-Reversion 1H Live Dashboard</title>
+  <title>1H LIVE DASHBOARD</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="10">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     :root {
@@ -428,12 +369,9 @@ def dashboard():
       font-size: .75rem;
       color: var(--text-muted);
     }
-    .metric-value.pos {
-      color: var(--success);
-    }
-    .metric-value.neg {
-      color: var(--danger);
-    }
+    .metric-value.pos { color: var(--success); }
+    .metric-value.neg { color: var(--danger); }
+
     .table-container {
       max-height: 340px;
       overflow-y: auto;
@@ -510,60 +448,20 @@ def dashboard():
       font-size: .7rem;
       border-width: 1px;
     }
-    .btn-outline-warning:hover {
-      background-color: rgba(250,204,21,.1);
-      border-color: var(--warning);
-      color: var(--warning);
-    }
-    .pnl-pos {
-      color: var(--success);
-      font-weight: 500;
-    }
-    .pnl-neg {
-      color: var(--danger);
-      font-weight: 500;
-    }
-    .pnl-small {
-      font-size: .72rem;
-      color: var(--text-muted);
-    }
-    ::-webkit-scrollbar {
-      width: 6px;
-    }
-    ::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #1f2937;
-      border-radius: 999px;
-    }
-    @media (max-width: 992px) {
-      .metric-value {
-        font-size: 1.2rem;
-      }
-      .nav-link {
-        font-size: .8rem;
-        text-transform: uppercase;
-        letter-spacing: .08em;
-      }
-    }
-    .nav-link {
-      font-size: .8rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-    }
+    .pnl-pos { color: var(--success); font-weight: 500; }
+    .pnl-neg { color: var(--danger); font-weight: 500; }
+    .pnl-small { font-size: .72rem; color: var(--text-muted); }
+
     .status-bar {
       font-size: .8rem;
       color: var(--text-muted);
     }
-    .status-bar span {
-      margin-right: 1rem;
-    }
-    .status-badge-paused {
-      color: #f97316;
-    }
-    .status-badge-active {
-      color: #22c55e;
+    .status-bar span { margin-right: 1rem; }
+    .status-badge-paused { color: #f97316; }
+    .status-badge-active { color: #22c55e; }
+
+    @media (max-width: 992px) {
+      .metric-value { font-size: 1.2rem; }
     }
   </style>
 </head>
@@ -591,53 +489,39 @@ def dashboard():
       <a class="nav-link active" href="#">Dashboard</a>
     </li>
     <li class="nav-item">
-      <a class="nav-link" href="/settings">Settings</a>
+      <a class="nav-link" href="{{ url_for('settings_page') }}">Settings</a>
     </li>
     <li class="nav-item">
-      <a class="nav-link" href="/journal">Journal</a>
+      <a class="nav-link" href="{{ url_for('journal_page') }}">Journal</a>
     </li>
   </ul>
 </div>
 
-<!-- STATUS BOTA / RYZYKO -->
 <div class="container-fluid mb-3">
   <div class="status-bar">
     {% if data.risk.trading_paused_for_today %}
-      <span class="status-badge-paused">
-        Trading status: PAUSED (daily loss limit reached)
-      </span>
+      <span class="status-badge-paused">Trading status: PAUSED (daily loss limit reached)</span>
     {% else %}
-      <span class="status-badge-active">
-        Trading status: ACTIVE
-      </span>
+      <span class="status-badge-active">Trading status: ACTIVE</span>
     {% endif %}
-    <span>
-      Today P&L:
+    <span>Today P&L: 
       {% if data.risk.pnl_today >= 0 %}
         <span class="pnl-pos">{{ data.risk.pnl_today }}</span>
       {% else %}
         <span class="pnl-neg">{{ data.risk.pnl_today }}</span>
       {% endif %}
     </span>
-
-    <span>
-      Limit: {{ data.risk.daily_risk_limit_usd }}
-    </span>
-    <span>
-      Trades today: {{ data.risk.trades_today }}
-    </span>
-  </div>
-
+    <span>Limit: {{ data.risk.daily_risk_limit_usd }}</span>
+    <span>Trades today: {{ data.risk.trades_today }}</span>
   </div>
 </div>
 
-<!-- METRYKI GŁÓWNE -->
 <div class="container-fluid mb-4">
   <div class="row g-3">
     <div class="col-6 col-md-2">
       <div class="card metric-card">
         <div class="metric-body">
-          <div class="metric-label">Total trades</div>
+          <div class="metric-label">TOTAL TRADES</div>
           <div class="metric-value">{{ data.stats.total_trades }}</div>
           <div class="metric-sub">Closed since start</div>
         </div>
@@ -646,7 +530,7 @@ def dashboard():
     <div class="col-6 col-md-2">
       <div class="card metric-card">
         <div class="metric-body">
-          <div class="metric-label">Win rate</div>
+          <div class="metric-label">WIN RATE</div>
           <div class="metric-value">{{ data.stats.win_rate }}%</div>
           <div class="metric-sub">All closed trades</div>
         </div>
@@ -655,16 +539,12 @@ def dashboard():
     <div class="col-6 col-md-3">
       <div class="card metric-card">
         <div class="metric-body">
-          <div class="metric-label">Total P&L</div>
+          <div class="metric-label">TOTAL P&L</div>
           <div class="metric-value {% if data.stats.total_pnl >= 0 %}pos{% else %}neg{% endif %}">
             {{ data.stats.total_pnl }}
           </div>
           <div class="metric-sub">
-            Max DD: {{ data.stats.max_drawdown }}
-            &nbsp;|&nbsp;
-            PF: {{ data.stats.profit_factor }}
-            &nbsp;|&nbsp;
-            Exp: {{ data.stats.expectancy }}
+            Max DD: {{ data.stats.max_drawdown }} · PF: {{ data.stats.profit_factor }} · Exp: {{ data.stats.expectancy }}
           </div>
         </div>
       </div>
@@ -672,20 +552,16 @@ def dashboard():
     <div class="col-6 col-md-3">
       <div class="card metric-card">
         <div class="metric-body">
-          <div class="metric-label">Account equity</div>
-          <div class="metric-value equity">
-            {{ data.equity }}
-          </div>
-          <div class="metric-sub">
-            Start: {{ config.account_equity_usd }} · Unrealized: {{ data.equity_unrealized }}
-          </div>
+          <div class="metric-label">ACCOUNT EQUITY</div>
+          <div class="metric-value equity">{{ data.equity }}</div>
+          <div class="metric-sub">Start: {{ cfg.account_equity_usd }} · Unrealized: {{ data.equity_unrealized }}</div>
         </div>
       </div>
     </div>
     <div class="col-6 col-md-2">
       <div class="card metric-card">
         <div class="metric-body">
-          <div class="metric-label">Best / worst</div>
+          <div class="metric-label">BEST / WORST</div>
           <div class="metric-value">
             <span class="pnl-pos">{{ data.stats.best_trade }}</span>
             <span class="pnl-small"> / </span>
@@ -698,7 +574,6 @@ def dashboard():
   </div>
 </div>
 
-<!-- CURRENT SIGNALS / OPEN POSITIONS / CLOSED TRADES -->
 <div class="container-fluid pb-4">
   <div class="row g-4">
     <!-- CURRENT SIGNALS -->
@@ -823,14 +698,14 @@ def dashboard():
       </div>
     </div>
 
-    <!-- CLOSED TRADES -->
+    <!-- RECENT CLOSED TRADES (trwale z loga) -->
     <div class="col-lg-4">
       <div class="card h-100">
         <div class="card-header">
-          <h5 class="mb-0">Recent Closed Trades</h5>
+          <h5 class="mb-0">Recent closed trades</h5>
         </div>
         <div class="card-body p-0 table-container">
-          {% if data.closed_trades %}
+          {% if recent_closed %}
           <table class="table table-dark table-sm mb-0 align-middle">
             <thead>
               <tr>
@@ -841,7 +716,7 @@ def dashboard():
               </tr>
             </thead>
             <tbody>
-              {% for t in data.closed_trades %}
+              {% for t in recent_closed %}
               <tr>
                 <td>{{ t.timestamp }}</td>
                 <td>{{ t.symbol }}</td>
@@ -869,19 +744,19 @@ def dashboard():
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 async function forceClose(symbol) {
-  if (!confirm('Force close ' + symbol + '?')) return;
+  if (!confirm('Force close ' + symbol + ' ?')) return;
   try {
-    const res = await fetch('/closeposition', {
+    const res = await fetch('/close_position', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol: symbol})
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: symbol })
     });
     const data = await res.json();
     if (!res.ok) {
-      alert('Error: ' + (data.error || res.status));
+      alert('Error: ' + data.error);
       return;
     }
-    alert('Closed ' + symbol + '\\nP&L: ' + data.pnlusd + ' USD (' + data.pnlpct + '%)');
+    alert('Closed ' + symbol + ' · P&L: ' + data.pnl_usd + ' USD (' + data.pnl_pct + '%)');
     location.reload();
   } catch (e) {
     alert('Request failed');
@@ -891,16 +766,22 @@ async function forceClose(symbol) {
 </body>
 </html>
 """
-    return render_template_string(html, data=dashboard_data, config=cfg)
+    return render_template_string(
+        html,
+        data=dashboard_data,
+        cfg=cfg,
+        recent_closed=recent_closed,
+    )
 
 
 @app.route("/settings", methods=["GET"])
 @requires_login
 def settings_page():
     cfg = load_config()
+
     html = """
 <!doctype html>
-<html lang="en">
+<html lang="pl">
 <head>
   <meta charset="utf-8">
   <title>Bot Settings</title>
@@ -939,11 +820,6 @@ def settings_page():
       color: #9ca3af;
       margin: 0;
     }
-    .nav-link {
-      font-size: .8rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-    }
     .settings-label {
       font-size: .75rem;
       color: #9ca3af;
@@ -960,33 +836,6 @@ def settings_page():
       background-color: #020617;
       color: #e5e7eb;
     }
-    .form-check-label {
-      font-size: .8rem;
-    }
-    .switch-compact .form-check-input {
-      width: 2.4rem;
-      height: 1.3rem;
-      background-color: #020617;
-      border-radius: 1rem;
-      border: 1px solid #4b5563;
-      cursor: pointer;
-      box-shadow: inset 0 0 4px rgba(15,23,42,0.8);
-    }
-    .switch-compact .form-check-input:focus {
-      box-shadow: 0 0 0 1px #38bdf8;
-      border-color: #38bdf8;
-    }
-    .switch-compact .form-check-input:checked {
-      background-color: #38bdf8;
-      border-color: #38bdf8;
-      box-shadow: 0 0 10px rgba(56,189,248,.6);
-    }
-    .switch-compact .form-check-label {
-      font-size: .78rem;
-      color: #9ca3af;
-      margin-left: 0.35rem;
-      user-select: none;
-    }
   </style>
 </head>
 <body>
@@ -996,7 +845,7 @@ def settings_page():
       <span class="navbar-brand mb-0 h1">BOT SETTINGS</span>
     </div>
     <div>
-      <a href="/" class="btn btn-sm btn-outline-light">Back to dashboard</a>
+      <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-outline-light">Back to dashboard</a>
     </div>
   </div>
 </nav>
@@ -1011,60 +860,54 @@ def settings_page():
       <form id="settings-form" class="row g-3 align-items-end">
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">Max positions</label>
-          <input type="number" min="1" max="20" step="1" class="form-control" id="max_open_positions">
+          <input type="number" min="1" max="20" step="1" class="form-control" id="max_open_positions" value="{{ cfg.max_open_positions }}">
         </div>
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">Default size USD</label>
-          <input type="number" min="1" step="1" class="form-control" id="default_position_size_usd">
+          <input type="number" min="1" step="1" class="form-control" id="default_position_size_usd" value="{{ cfg.default_position_size_usd }}">
         </div>
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">Account equity USD</label>
-          <input type="number" min="1" step="1" class="form-control" id="account_equity_usd">
+          <input type="number" min="1" step="1" class="form-control" id="account_equity_usd" value="{{ cfg.account_equity_usd }}">
         </div>
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">SL long %</label>
-          <input type="number" min="0.1" step="0.1" class="form-control" id="sl_pct_long">
+          <input type="number" min="0.1" step="0.1" class="form-control" id="sl_pct_long" value="{{ cfg.sl_pct_long }}">
         </div>
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">TP long %</label>
-          <input type="number" min="0.1" step="0.1" class="form-control" id="tp_pct_long">
+          <input type="number" min="0.1" step="0.1" class="form-control" id="tp_pct_long" value="{{ cfg.tp_pct_long }}">
         </div>
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">SL short %</label>
-          <input type="number" min="0.1" step="0.1" class="form-control" id="sl_pct_short">
+          <input type="number" min="0.1" step="0.1" class="form-control" id="sl_pct_short" value="{{ cfg.sl_pct_short }}">
         </div>
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">TP short %</label>
-          <input type="number" min="0.1" step="0.1" class="form-control" id="tp_pct_short">
+          <input type="number" min="0.1" step="0.1" class="form-control" id="tp_pct_short" value="{{ cfg.tp_pct_short }}">
         </div>
         <div class="col-6 col-md-2">
-          <label class="settings-label mb-1">Cooldown (h)</label>
-          <input type="number" min="0" step="0.5" class="form-control" id="cooldown_hours">
+          <label class="settings-label mb-1">Cooldown h</label>
+          <input type="number" min="0" step="0.5" class="form-control" id="cooldown_hours" value="{{ cfg.cooldown_hours }}">
         </div>
         <div class="col-6 col-md-2">
           <label class="settings-label mb-1">Daily risk limit USD</label>
-          <input type="number" step="1" class="form-control" id="daily_risk_limit_usd">
+          <input type="number" step="1" class="form-control" id="daily_risk_limit_usd" value="{{ cfg.daily_risk_limit_usd }}">
         </div>
         <div class="col-6 col-md-3">
-          <div class="form-check form-switch mt-4 switch-compact">
-            <input class="form-check-input" type="checkbox" id="daily_risk_limit_enabled" role="switch">
-            <label class="form-check-label" for="daily_risk_limit_enabled">
-              Daily risk limit
-            </label>
+          <div class="form-check form-switch mt-4">
+            <input class="form-check-input" type="checkbox" id="daily_risk_limit_enabled" {% if cfg.daily_risk_limit_enabled %}checked{% endif %}>
+            <label class="form-check-label" for="daily_risk_limit_enabled">Daily risk limit</label>
           </div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="form-check form-switch mt-4 switch-compact">
-            <input class="form-check-input" type="checkbox" id="live_trading_mode" role="switch">
-            <label class="form-check-label" for="live_trading_mode">
-              Live trading
-            </label>
+          <div class="form-check form-switch mt-4">
+            <input class="form-check-input" type="checkbox" id="live_trading_mode" {% if cfg.live_trading_mode %}checked{% endif %}>
+            <label class="form-check-label" for="live_trading_mode">Live trading</label>
           </div>
         </div>
         <div class="col-12 col-md-2 text-md-end">
-          <button type="button" class="btn btn-sm btn-primary" onclick="saveSettings()">
-            Save settings
-          </button>
+          <button type="button" class="btn btn-sm btn-primary" onclick="saveSettings()">Save settings</button>
         </div>
         <div class="col-12">
           <small id="settings-status" class="text-muted"></small>
@@ -1075,78 +918,56 @@ def settings_page():
 </div>
 
 <script>
-async function loadSettings() {
-  const statusEl = document.getElementById('settings-status');
-  statusEl.textContent = '';
-  try {
-    const res = await fetch('/config');
-    const cfg = await res.json();
-
-    document.getElementById('max_open_positions').value = cfg.max_open_positions ?? 3;
-    document.getElementById('default_position_size_usd').value = cfg.default_position_size_usd ?? 100;
-    document.getElementById('account_equity_usd').value = cfg.account_equity_usd ?? 1000;
-    document.getElementById('sl_pct_long').value = cfg.sl_pct_long ?? 3.0;
-    document.getElementById('tp_pct_long').value = cfg.tp_pct_long ?? 3.5;
-    document.getElementById('sl_pct_short').value = cfg.sl_pct_short ?? 3.0;
-    document.getElementById('tp_pct_short').value = cfg.tp_pct_short ?? 3.5;
-    document.getElementById('cooldown_hours').value = cfg.cooldown_hours ?? 1.0;
-    document.getElementById('daily_risk_limit_usd').value = cfg.daily_risk_limit_usd ?? -50;
-    document.getElementById('daily_risk_limit_enabled').checked = cfg.daily_risk_limit_enabled ?? false;
-    document.getElementById('live_trading_mode').checked = cfg.live_trading_mode ?? false;
-  } catch (e) {
-    statusEl.textContent = 'Failed to load settings';
-  }
-}
-
 async function saveSettings() {
   const statusEl = document.getElementById('settings-status');
   statusEl.textContent = 'Saving...';
+
   const payload = {
     max_open_positions: Number(document.getElementById('max_open_positions').value),
     default_position_size_usd: Number(document.getElementById('default_position_size_usd').value),
+    account_equity_usd: Number(document.getElementById('account_equity_usd').value),
     sl_pct_long: Number(document.getElementById('sl_pct_long').value),
     tp_pct_long: Number(document.getElementById('tp_pct_long').value),
     sl_pct_short: Number(document.getElementById('sl_pct_short').value),
     tp_pct_short: Number(document.getElementById('tp_pct_short').value),
-    account_equity_usd: Number(document.getElementById('account_equity_usd').value),
     cooldown_hours: Number(document.getElementById('cooldown_hours').value),
-    live_trading_mode: document.getElementById('live_trading_mode').checked,
     daily_risk_limit_usd: Number(document.getElementById('daily_risk_limit_usd').value),
     daily_risk_limit_enabled: document.getElementById('daily_risk_limit_enabled').checked,
+    live_trading_mode: document.getElementById('live_trading_mode').checked
   };
+
   try {
     const res = await fetch('/config', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
     });
     if (!res.ok) {
       statusEl.textContent = 'Error saving settings';
       return;
     }
-    statusEl.textContent = 'Settings saved (apply from next cycle).';
+    statusEl.textContent = 'Settings saved, will apply from next cycle.';
   } catch (e) {
     statusEl.textContent = 'Error saving settings';
   }
 }
-
-document.addEventListener('DOMContentLoaded', loadSettings);
 </script>
 </body>
 </html>
 """
-    return render_template_string(html)
+    return render_template_string(html, cfg=cfg)
 
 
 @app.route("/journal")
 @requires_login
-def journal():
+def journal_page():
     cfg = load_config()
     page_size = int(cfg.get("journal_page_size", 50))
     records = load_journal_records(page_size=page_size)
+
     html = """
 <!doctype html>
-<html lang="en">
+<html lang="pl">
 <head>
   <meta charset="utf-8">
   <title>Trade Journal</title>
@@ -1197,25 +1018,8 @@ def journal():
       letter-spacing: .06em;
       color: #9ca3af;
     }
-    .table-dark tbody tr:nth-child(even) {
-      background-color: rgba(15,23,42,.7);
-    }
-    .table-dark tbody tr:hover {
-      background-color: rgba(30,64,175,.35);
-    }
-    .pnl-pos {
-      color: #4ade80;
-      font-weight: 500;
-    }
-    .pnl-neg {
-      color: #f87171;
-      font-weight: 500;
-    }
-    .nav-link {
-      font-size: .8rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-    }
+    .pnl-pos { color: #4ade80; font-weight: 500; }
+    .pnl-neg { color: #f87171; font-weight: 500; }
   </style>
 </head>
 <body>
@@ -1225,7 +1029,7 @@ def journal():
       <span class="navbar-brand mb-0 h1">TRADE JOURNAL</span>
     </div>
     <div>
-      <a href="/" class="btn btn-sm btn-outline-light">Back to dashboard</a>
+      <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-outline-light">Back to dashboard</a>
     </div>
   </div>
 </nav>
@@ -1279,20 +1083,8 @@ def journal():
                 {% endif %}
               </td>
               <td>{{ r.rr }}</td>
-              <td>
-                {% if r.mfe_pct is not none %}
-                  {{ r.mfe_pct }}%
-                {% else %}
-                  -
-                {% endif %}
-              </td>
-              <td>
-                {% if r.mae_pct is not none %}
-                  {{ r.mae_pct }}%
-                {% else %}
-                  -
-                {% endif %}
-              </td>
+              <td>{% if r.mfe_pct is not none %}{{ r.mfe_pct }}%{% else %}-{% endif %}</td>
+              <td>{% if r.mae_pct is not none %}{{ r.mae_pct }}%{% else %}-{% endif %}</td>
               <td>{{ r.duration or "-" }}</td>
             </tr>
             {% endfor %}
@@ -1321,10 +1113,11 @@ def api_status():
 def api_config():
     if request.method == "GET":
         return jsonify(load_config())
+
     cfg = load_config()
     data = request.json or {}
 
-    for key in (
+    for key in [
         "confidence_threshold",
         "max_open_positions",
         "default_position_size_usd",
@@ -1339,20 +1132,19 @@ def api_config():
         "risk_per_trade_pct",
         "daily_risk_limit_usd",
         "daily_risk_limit_enabled",
-    ):
+        "trading_paused_for_today",
+    ]:
         if key in data:
             cfg[key] = data[key]
 
-    if "symbol_position_size" in data and isinstance(
-        data["symbol_position_size"], dict
-    ):
+    if "symbol_position_size" in data and isinstance(data["symbol_position_size"], dict):
         cfg.setdefault("symbol_position_size", {}).update(data["symbol_position_size"])
 
     save_config(cfg)
     return jsonify(cfg)
 
 
-@app.route("/closeposition", methods=["POST"])
+@app.route("/close_position", methods=["POST"])
 @requires_login
 def close_position():
     data = request.json or {}
@@ -1371,6 +1163,8 @@ def close_position():
     cooldown_hours = cfg.get("cooldown_hours", 1.0)
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # wylicz P&L po aktualnej cenie z Binance (fallback: entry)
     try:
         df_last = fetch_candles_binance(symbol=symbol, interval=TIMEFRAME, limit=1)
         if df_last is not None and not df_last.empty:
@@ -1393,8 +1187,9 @@ def close_position():
     mfe_pct = float(position.get("mfe_pct", 0.0))
     mae_pct = float(position.get("mae_pct", 0.0))
 
+    # log do trade_results.log
     try:
-        with open("trade_results.log", "a", encoding="utf-8") as f:
+        with open(TRADE_RESULTS_FILE, "a", encoding="utf-8") as f:
             log_msg = (
                 f"[{timestamp}] {symbol}: CLOSED @ FORCE | "
                 f"P&L: ${pnl_usd:.2f} ({pnl_pct:.2f}%) | "
@@ -1404,11 +1199,13 @@ def close_position():
     except Exception:
         pass
 
+    # cooldown dla symbolu
     from datetime import timedelta
 
     unblock_time = datetime.now() + timedelta(hours=float(cooldown_hours))
     force_closed_until[symbol] = unblock_time.strftime("%Y-%m-%d %H:%M:%S")
 
+    # dopisz do pamięci (runtime) – panel odświeżony od razu to zobaczy
     dashboard_data["closed_trades"].insert(
         0,
         {
@@ -1419,14 +1216,14 @@ def close_position():
             "timestamp": timestamp,
         },
     )
-    dashboard_data["closed_trades"] = dashboard_data["closed_trades"][:10]
+    dashboard_data["closed_trades"] = dashboard_data["closed_trades"][:5]
 
     return jsonify(
         {
             "symbol": symbol,
             "closed_at": timestamp,
-            "pnlusd": round(pnl_usd, 2),
-            "pnlpct": round(pnl_pct, 2),
+            "pnl_usd": round(pnl_usd, 2),
+            "pnl_pct": round(pnl_pct, 2),
         }
     )
 

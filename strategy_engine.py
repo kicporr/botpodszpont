@@ -12,10 +12,11 @@ from config_manager import (
 )
 from data_providers import fetch_candles_binance
 
-
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "XRPUSDT", "BCHUSDT", "BNBUSDT"]
 TIMEFRAME = "1h"
 LIMIT = 300
+
+# pliki logów – ścieżki trzyma config_manager
 TRADE_RESULTS_FILE = "trade_results.log"
 TRADE_SIGNALS_FILE = "trade_signals.log"
 
@@ -49,17 +50,19 @@ def get_today_pnl_from_log() -> float:
 
     return pnl_today
 
+
 def get_today_trade_count() -> int:
     """
     Liczy ile zamkniętych tradów było dziś (po 'CLOSED @').
     """
     today_str = date.today().strftime("%Y-%m-%d")
     count = 0
-    if not os.path.exists("trade_results.log"):
+
+    if not os.path.exists(TRADE_RESULTS_FILE):
         return 0
 
     try:
-        with open("trade_results.log", "r", encoding="utf-8") as f:
+        with open(TRADE_RESULTS_FILE, "r", encoding="utf-8") as f:
             for line in f:
                 if today_str not in line:
                     continue
@@ -256,7 +259,6 @@ def run_live_cycle(dashboard_data: Dict[str, Any], force_closed_until: Dict[str,
         "trades_today": trades_today,
     }
 
-
     # zarządzanie otwartymi pozycjami
     closed_trades, current_positions = manage_positions()
     if closed_trades:
@@ -271,7 +273,8 @@ def run_live_cycle(dashboard_data: Dict[str, Any], force_closed_until: Dict[str,
                     "timestamp": timestamp,
                 },
             )
-        dashboard_data["closed_trades"] = dashboard_data["closed_trades"][:10]
+        # trzymamy w pamięci tylko ostatnie 5 (historyczne będą czytane z loga w web_app)
+        dashboard_data["closed_trades"] = dashboard_data["closed_trades"][:5]
 
     # otwarte pozycje z aktualizacją MFE/MAE
     dashboard_data["open_positions"] = {}
@@ -427,7 +430,7 @@ def run_live_cycle(dashboard_data: Dict[str, Any], force_closed_until: Dict[str,
 
     dashboard_data["current_signals"] = current_signals
 
-    # log sygnałów + zapis nowych pozycji z MFE/MAE
+    # log sygnałów + zapis nowych pozycji
     if trades_to_execute:
         try:
             with open(TRADE_SIGNALS_FILE, "a", encoding="utf-8") as f:
@@ -479,7 +482,7 @@ def run_live_cycle(dashboard_data: Dict[str, Any], force_closed_until: Dict[str,
             }
         save_positions(positions)
 
-    # statystyki zamkniętych tradów
+    # statystyki zamkniętych tradów z loga
     trade_stats = load_trade_results()
     trades = trade_stats["trades"]
     total = trade_stats["total_trades"]
@@ -506,7 +509,6 @@ def run_live_cycle(dashboard_data: Dict[str, Any], force_closed_until: Dict[str,
 
     avg_win = gross_profit / wins if wins > 0 else 0.0
     avg_loss = (gross_loss / losses) if losses > 0 else 0.0
-    # expectancy w USD na trade
     expectancy = (wins / total) * avg_win - (losses / total) * avg_loss if total > 0 else 0.0
 
     dashboard_data["stats"] = {
@@ -523,7 +525,6 @@ def run_live_cycle(dashboard_data: Dict[str, Any], force_closed_until: Dict[str,
         "expectancy": round(expectancy, 2),
     }
 
-
     # equity live = equity start + realized + unrealized
     unrealized_pnl = 0.0
     for pos in dashboard_data["open_positions"].values():
@@ -532,9 +533,6 @@ def run_live_cycle(dashboard_data: Dict[str, Any], force_closed_until: Dict[str,
     equity_live = account_equity + total_pnl + unrealized_pnl
     dashboard_data["equity"] = round(equity_live, 2)
     dashboard_data["equity_unrealized"] = round(unrealized_pnl, 2)
-
-    # zapis pozycji (w tym zaktualizowane MFE/MAE)
-    save_positions(current_positions)
 
     # zapis stanu pauzy w configu
     cfg["trading_paused_for_today"] = trading_paused_for_today

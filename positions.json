@@ -1,35 +1,57 @@
 {
-  "XRPUSDT": {
-    "entry": 1.8708,
-    "sl": 1.926924,
-    "tp": 1.8053219999999999,
+  "BTCUSDT": {
+    "entry": 87895.17,
+    "sl": 90532.0251,
+    "tp": 84818.83905,
     "action": "SELL",
     "conf": 1.0,
-    "position_size_usd": 666.666666666666,
-    "opened_at": "2025-12-28 16:54:07",
-    "mfe_pct": 0.8659397049390631,
-    "mae_pct": -0.042762454564887316
+    "position_size_usd": 666.6666666666665,
+    "opened_at": "2025-12-29 15:49:28",
+    "mfe_pct": 0.0,
+    "mae_pct": 0.0
   },
-  "BCHUSDT": {
-    "entry": 632.4,
-    "sl": 651.372,
-    "tp": 610.266,
-    "action": "SELL",
-    "conf": 1.0,
-    "position_size_usd": 666.6666666666673,
-    "opened_at": "2025-12-28 16:54:07",
-    "mfe_pct": 2.6249209361163857,
-    "mae_pct": -0.18975332068311915
-  },
-  "BNBUSDT": {
-    "entry": 861.8,
-    "sl": 887.654,
-    "tp": 831.637,
+  "ETHUSDT": {
+    "entry": 2950.07,
+    "sl": 3038.5721000000003,
+    "tp": 2846.81755,
     "action": "SELL",
     "conf": 1.0,
     "position_size_usd": 666.6666666666655,
-    "opened_at": "2025-12-28 16:54:07",
-    "mfe_pct": 0.48503132977488395,
-    "mae_pct": -0.4072870735669519
+    "opened_at": "2025-12-29 15:49:28",
+    "mfe_pct": 0.0,
+    "mae_pct": 0.0
+  },
+  "BNBUSDT": {
+    "entry": 853.68,
+    "sl": 879.2904,
+    "tp": 823.8011999999999,
+    "action": "SELL",
+    "conf": 1.0,
+    "position_size_usd": 666.666666666666,
+    "opened_at": "2025-12-29 15:49:28",
+    "mfe_pct": 0.0,
+    "mae_pct": 0.0
+  },
+  "XRPUSDT": {
+    "entry": 1.8699,
+    "sl": 1.925997,
+    "tp": 1.8044535,
+    "action": "SELL",
+    "conf": 1.0,
+    "position_size_usd": 666.6666666666658,
+    "opened_at": "2025-12-29 15:54:52",
+    "mfe_pct": 0.0,
+    "mae_pct": 0.0
+  },
+  "BCHUSDT": {
+    "entry": 601.9,
+    "sl": 619.957,
+    "tp": 580.8335,
+    "action": "SELL",
+    "conf": 1.0,
+    "position_size_usd": 666.6666666666661,
+    "opened_at": "2025-12-29 15:54:52",
+    "mfe_pct": 0.0,
+    "mae_pct": 0.0
   }
 }
